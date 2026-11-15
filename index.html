@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- Strict Content-Security-Policy permitting trusted CDNs, Web Audio/Speech/Crypto, and inline telemetry styles/scripts -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://placehold.co; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';" />
+  <!-- Strict Content-Security-Policy permitting trusted CDNs, local backend API, Web Audio/Speech/Crypto, and inline telemetry styles/scripts -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://placehold.co; media-src 'self' blob:; connect-src 'self' http://127.0.0.1:8080 http://localhost:8080; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';" />
   <title>ASTRA-MED | Linear-Style Autonomous Astronaut Mission OS</title>
 
   <!-- Typography: Inter & JetBrains Mono -->
@@ -639,8 +639,8 @@
           </div>
           <div class="flex items-center justify-between text-[11px] text-slate-400">
             <span class="flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Zero-Trust Local Vault
+              <span id="backendSyncDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span id="backendSyncLabel">Zero-Trust Local Vault</span>
             </span>
             <button id="encryptVaultBtn" type="button" class="font-mono text-violet-300 hover:text-violet-200 underline underline-offset-2">
               Encrypt Snapshot
@@ -945,49 +945,90 @@
       const el = (id) => document.getElementById(id);
 
       // =========================================================================
-      // 1. AI VOICE SYNTHESIS & HANDS-FREE SPEECH RECOGNITION CO-PILOT
+      // 1. CENTRAL MISSION STATE & 7-SOL TELEMETRY HISTORY
+      // =========================================================================
+      const state = {
+        env: 'ISS',
+        selectedOrgan: 'neuro',
+        emergencyActive: false,
+        xp: 650,
+        waterLoggedMl: 1250,
+        vitals: {
+          hr: 68,
+          sys: 118,
+          glucose: 94,
+          temp: 36.8,
+          sleep: 7.4,
+          rad: 0.6,
+          boneDensity: 99.2,
+          hydrationPct: 96,
+          suitTemp: 18.5,
+          suitBat: 94,
+          suitSublimator: 92,
+          suitPressure: '4.3 psi (29.6 kPa)',
+          suitO2: 96,
+          suitCo2: 0.4,
+          ecoPower: false
+        },
+        symptoms: {
+          dizziness: false,
+          fatigue: false,
+          soreness: false,
+          nausea: false
+        },
+        trends7d: {
+          hr: [65, 67, 70, 66, 69, 68, 68],
+          bone: [99.8, 99.7, 99.6, 99.5, 99.4, 99.3, 99.2],
+          rad: [0.4, 0.5, 0.5, 0.6, 0.5, 0.6, 0.6],
+          hydration: [98, 95, 94, 97, 95, 96, 96]
+        }
+      };
+
+      const ENV_META = {
+        ISS: { delay: 'ISS LEO • Latency: 0.4s Real-Time', radMult: 1.0 },
+        MOON: { delay: 'Artemis Lunar Base • Latency: 1.3s Earth-Moon', radMult: 1.4 },
+        MARS: { delay: 'Mars Transit • Latency: 14m 20s (Offline Triage Active)', radMult: 1.8 }
+      };
+
+      function clampNumber(val, min, max, fallback) {
+        const n = Number(val);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+      }
+
+      // =========================================================================
+      // 2. AI VOICE SYNTHESIS & HANDS-FREE COMMAND PROCESSOR
       // =========================================================================
       function speakAI(text) {
-        el('aiVoiceTranscript').textContent = `AI Co-Pilot: "${text}"`;
+        const transcript = el('aiVoiceTranscript');
+        if (transcript) transcript.textContent = `AI Co-Pilot: "${text}"`;
         if (!('speechSynthesis' in window)) return;
         try {
           window.speechSynthesis.cancel();
           const utter = new SpeechSynthesisUtterance(text);
           utter.rate = 1.03;
           utter.pitch = 1.0;
-          const voices = window.speechSynthesis.getVoices();
-          const preferred = voices.find((v) => /en-US|Google US English|Samantha|Daniel/i.test(v.name));
-          if (preferred) utter.voice = preferred;
           window.speechSynthesis.speak(utter);
         } catch (err) {
-          // Graceful fallback if speech synthesis is blocked
+          // Ignore speech synthesis restrictions
         }
       }
 
-      function executeVoiceOrTextCommand(rawCmd) {
-        const cmd = rawCmd.toLowerCase().trim();
+      function executeVoiceOrTextCommand(rawText) {
+        const cmd = String(rawText || '').toLowerCase().trim();
         if (!cmd) return;
 
-        if (cmd.includes('emergency') || cmd.includes('mayday') || cmd.includes('distress')) {
+        if (cmd.includes('emergency') || cmd.includes('mayday') || cmd.includes('alert')) {
           triggerEmergencyAlert();
-        } else if (cmd.includes('stand down') || cmd.includes('cancel emergency')) {
+        } else if (cmd.includes('stand down') || cmd.includes('reset')) {
           standDownEmergency();
+          speakAI('Emergency alert stood down. Telemetry nominal.');
         } else if (cmd.includes('scanner') || cmd.includes('rppg') || cmd.includes('camera')) {
-          openRppgScanner();
-          speakAI('Opening biometric webcam rPPG heart-rate and ocular fatigue scanner.');
-        } else if (cmd.includes('surgeon') || cmd.includes('doctor') || cmd.includes('symptom')) {
+          openRppgScannerModal();
+          speakAI('Opening biometric webcam rPPG heart-rate scanner.');
+        } else if (cmd.includes('surgeon') || cmd.includes('doctor') || cmd.includes('ai')) {
           el('aiSurgeonDrawer').classList.remove('hidden');
-          speakAI('Offline AI Flight Surgeon co-pilot active. Describe your symptoms.');
-        } else if (cmd.includes('solar') || cmd.includes('storm') || cmd.includes('radiation')) {
-          applyPreset('radiation');
-          speakAI('Warning. Solar particle storm simulated. Radiation elevated to 14.2 millisieverts. Proceed to storm shelter and take antioxidant rations.');
-        } else if (cmd.includes('dehydrat') || cmd.includes('fluid')) {
-          applyPreset('dehydration');
-          speakAI('Alert. Microgravity fluid shift and dehydration detected. Hydration target increased to 3,400 milliliters.');
-        } else if (cmd.includes('nominal') || cmd.includes('normal') || cmd.includes('reset')) {
-          standDownEmergency(true);
-          applyPreset('nominal');
-          speakAI('All biometric and xEMU suit systems restored to nominal baseline.');
+          speakAI('Offline AI Flight Surgeon co-pilot ready.');
         } else if (cmd.includes('water') || cmd.includes('drink') || cmd.includes('hydrate')) {
           logWaterIntake(250);
           speakAI('Logged 250 milliliters of electrolyte water. Plus 25 XP awarded.');
@@ -1056,14 +1097,50 @@
       });
 
       // =========================================================================
-      // 2. ZERO-KNOWLEDGE PBKDF2-SHA256 IAM, BRUTE-FORCE LOCKOUT & IDLE TIMEOUT
+      // 3. ZERO-KNOWLEDGE PBKDF2-SHA256 IAM, BACKEND SYNC & IDLE TIMEOUT
       // =========================================================================
+      const API_BASE = 'http://127.0.0.1:8080/api';
       const PROVISIONED_CREW_ID = 'NASA-ARTEMIS-04';
       const DEFAULT_PASSKEY = 'ORION-2026';
       const IAM_SALT_BYTES = new TextEncoder().encode('ASTRA-MED-PBKDF2-100K-SALT-2026');
       const VAULT_DERIVED_KEY = 'astramed_pbkdf2_key_v3';
       const FAIL_COUNT_KEY = 'astramed_auth_fails';
       const LOCK_UNTIL_KEY = 'astramed_auth_lock_until';
+      let backendToken = null;
+      let backendOnline = false;
+
+      async function apiRequest(endpoint, method = 'GET', bodyObj = null) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1800);
+        try {
+          const headers = { 'Content-Type': 'application/json' };
+          if (backendToken) headers['Authorization'] = `Bearer ${backendToken}`;
+          const res = await fetch(`${API_BASE}${endpoint}`, {
+            method,
+            headers,
+            body: bodyObj ? JSON.stringify(bodyObj) : null,
+            signal: controller.signal
+          });
+          clearTimeout(timer);
+          const data = await res.json().catch(() => ({}));
+          return { ok: res.ok, status: res.status, data };
+        } catch (err) {
+          clearTimeout(timer);
+          return { ok: false, status: 0, offline: true, data: {} };
+        }
+      }
+
+      async function probeBackendStatus() {
+        const res = await apiRequest('/health', 'GET');
+        backendOnline = Boolean(res.ok && res.data?.status === 'ONLINE');
+        const lbl = el('backendSyncLabel');
+        if (lbl) {
+          lbl.textContent = backendOnline
+            ? 'Encrypted SQLite + Audit Chain'
+            : 'Zero-Trust Local Vault';
+        }
+      }
+      probeBackendStatus();
 
       async function derivePbkdf2Hex(passkey) {
         const keyMaterial = await window.crypto.subtle.importKey(
@@ -1128,6 +1205,10 @@
       });
 
       function lockSessionNow(reasonMsg) {
+        if (backendToken) {
+          apiRequest('/auth/logout', 'POST', {});
+          backendToken = null;
+        }
         stopRppgCamera();
         el('appShell').classList.add('hidden');
         el('authGate').classList.remove('hidden');
@@ -1152,26 +1233,46 @@
 
         const enteredId = el('loginCrewId').value.trim().toUpperCase();
         const enteredPass = el('loginPasskey').value;
-        const storedHash = await ensureProvisionedHash();
-        const inputHash = await derivePbkdf2Hex(enteredPass);
 
-        if (enteredId !== PROVISIONED_CREW_ID || inputHash !== storedHash) {
-          const fails = Number(sessionStorage.getItem(FAIL_COUNT_KEY) || 0) + 1;
-          sessionStorage.setItem(FAIL_COUNT_KEY, String(fails));
-          if (fails >= 3) {
-            const cooldownMs = Math.min(60000, fails * 10000);
-            sessionStorage.setItem(LOCK_UNTIL_KEY, String(Date.now() + cooldownMs));
-            el('lockoutStatusBadge').textContent = 'LOCKED';
-            el('lockoutStatusBadge').className = 'text-rose-400';
-            errBox.textContent = `SECURITY LOCKOUT: Too many failed attempts. Wait ${cooldownMs / 1000}s.`;
-          } else {
-            errBox.textContent = `AUTHENTICATION FAILED (${fails}/3): Invalid NASA Crew ID or Passkey.`;
+        const apiLogin = await apiRequest('/auth/login', 'POST', {
+          crewId: enteredId,
+          passkey: enteredPass
+        });
+
+        if (!apiLogin.offline) {
+          if (!apiLogin.ok) {
+            errBox.textContent = apiLogin.data?.error || 'Backend IAM rejected credentials.';
+            errBox.classList.remove('hidden');
+            return;
           }
-          errBox.classList.remove('hidden');
-          return;
+          backendOnline = true;
+          backendToken = apiLogin.data.token;
+          const latest = await apiRequest('/vitals/latest', 'GET');
+          if (latest.ok && latest.data?.vitals && typeof latest.data.vitals.hr === 'number') {
+            state.vitals = { ...state.vitals, ...latest.data.vitals };
+            if (latest.data.vitals.symptoms) state.symptoms = { ...state.symptoms, ...latest.data.vitals.symptoms };
+          }
+        } else {
+          const storedHash = await ensureProvisionedHash();
+          const inputHash = await derivePbkdf2Hex(enteredPass);
+
+          if (enteredId !== PROVISIONED_CREW_ID || inputHash !== storedHash) {
+            const fails = Number(sessionStorage.getItem(FAIL_COUNT_KEY) || 0) + 1;
+            sessionStorage.setItem(FAIL_COUNT_KEY, String(fails));
+            if (fails >= 3) {
+              const cooldownMs = Math.min(60000, fails * 10000);
+              sessionStorage.setItem(LOCK_UNTIL_KEY, String(Date.now() + cooldownMs));
+              el('lockoutStatusBadge').textContent = 'LOCKED';
+              el('lockoutStatusBadge').className = 'text-rose-400';
+              errBox.textContent = `SECURITY LOCKOUT: Too many failed attempts. Wait ${cooldownMs / 1000}s.`;
+            } else {
+              errBox.textContent = `AUTHENTICATION FAILED (${fails}/3): Invalid NASA Crew ID or Passkey.`;
+            }
+            errBox.classList.remove('hidden');
+            return;
+          }
         }
 
-        // Success
         sessionStorage.removeItem(FAIL_COUNT_KEY);
         sessionStorage.removeItem(LOCK_UNTIL_KEY);
         el('lockoutStatusBadge').textContent = 'READY';
@@ -1186,6 +1287,7 @@
         if (el('lockedCrewIdInput')) {
           el('lockedCrewIdInput').value = PROVISIONED_CREW_ID;
         }
+        probeBackendStatus();
 
         if (!window.__threeInitialized) {
           init3DHologram();
@@ -1232,6 +1334,21 @@
           return;
         }
 
+        if (backendOnline && backendToken) {
+          const rot = await apiRequest('/auth/rotate-passkey', 'POST', {
+            crewId: PROVISIONED_CREW_ID,
+            currentPasskey: curPass,
+            newPasskey: newPass
+          });
+          if (!rot.ok) {
+            fb.textContent = rot.data?.error || 'Backend passkey rotation rejected.';
+            fb.className = 'text-xs font-mono rounded-lg px-3 py-2 bg-rose-500/15 text-rose-300 border border-rose-500/30';
+            fb.classList.remove('hidden');
+            return;
+          }
+          backendToken = rot.data.token;
+        }
+
         const newHash = await derivePbkdf2Hex(newPass);
         localStorage.setItem(VAULT_DERIVED_KEY, newHash);
         el('currentPassInput').value = '';
@@ -1243,7 +1360,7 @@
       });
 
       // =========================================================================
-      // 3. RED-ALERT EMERGENCY TRIGGER & LIFE-SUPPORT BEACON
+      // 4. RED-ALERT EMERGENCY TRIGGER & LIFE-SUPPORT BEACON
       // =========================================================================
       function playEmergencySiren() {
         try {
@@ -1272,7 +1389,6 @@
         document.body.classList.add('emergency-active');
         el('emergencyBanner').classList.remove('hidden');
 
-        // Autonomous life-support stabilization: boost suit cooling & switch to critical triage
         state.vitals.suitTemp = 16.5;
         state.vitals.ecoPower = false;
         state.selectedOrgan = 'cardio';
@@ -1286,427 +1402,122 @@
           timestamp,
           vitals: state.vitals
         }));
+        if (backendOnline && backendToken) {
+          apiRequest('/emergency/trigger', 'POST', {
+            environment: state.env,
+            vitals: { ...state.vitals, symptoms: state.symptoms }
+          });
+        }
 
         showToast('EMERGENCY BEACON TRANSMITTING • Suit Cooling Maximized');
         speakAI('Warning! Crew medical emergency triggered. Initiating autonomous life-support stabilization, maximizing suit cooling loop, and transmitting encrypted distress telemetry.');
       }
 
-      function standDownEmergency(silent = false) {
+      function standDownEmergency() {
         if (!state.emergencyActive) return;
         state.emergencyActive = false;
         document.body.classList.remove('emergency-active');
         el('emergencyBanner').classList.add('hidden');
-        updateDashboard();
-        if (!silent) {
-          showToast('Emergency stand-down confirmed. Systems returning to normal.');
-          speakAI('Emergency alert cleared. Resuming standard mission telemetry.');
+        if (backendOnline && backendToken) {
+          apiRequest('/emergency/stand-down', 'POST', {});
         }
+        updateDashboard();
       }
 
       el('emergencyTriggerBtn').addEventListener('click', triggerEmergencyAlert);
-      el('standDownEmergencyBtn').addEventListener('click', () => standDownEmergency(false));
+      el('standDownEmergencyBtn').addEventListener('click', () => {
+        standDownEmergency();
+        showToast('Emergency beacon stood down. Nominal telemetry restored.');
+      });
 
       // =========================================================================
-      // 4. STATE, 7-DAY SPARKLINES, SYMPTOM PRESCRIPTIONS & XP ENGINE
-      // =========================================================================
-      let state = {
-        env: 'ISS',
-        selectedOrgan: 'neuro',
-        emergencyActive: false,
-        xp: 650,
-        waterLoggedMl: 1250,
-        symptoms: {
-          dizziness: false,
-          fatigue: false,
-          soreness: false,
-          nausea: false
-        },
-        vitals: {
-          hr: 68,
-          sys: 118,
-          glucose: 94,
-          temp: 36.8,
-          sleep: 7.4,
-          rad: 0.6,
-          boneDensity: 99.2,
-          hydrationPct: 96,
-          suitTemp: 18.5,
-          suitBat: 94,
-          suitSublimator: 92,
-          suitPressure: '4.3 psi (29.6 kPa)',
-          suitO2: 96,
-          suitCo2: 0.4,
-          ecoPower: false
-        },
-        trends7d: {
-          hr: [65, 67, 66, 70, 69, 67, 68],
-          bone: [99.8, 99.7, 99.6, 99.5, 99.4, 99.3, 99.2],
-          rad: [0.2, 0.3, 0.3, 0.4, 0.5, 0.5, 0.6],
-          hydration: [95, 94, 96, 92, 95, 97, 96]
-        }
-      };
-
-      function renderSparkline(svgId, series, strokeColor) {
-        const svg = el(svgId);
-        if (!svg || !series || series.length < 2) return;
-        while (svg.firstChild) svg.removeChild(svg.firstChild);
-
-        const min = Math.min(...series);
-        const max = Math.max(...series);
-        const span = max - min || 1;
-        const pts = series.map((val, idx) => {
-          const x = (idx / (series.length - 1)) * 96 + 2;
-          const y = 20 - ((val - min) / span) * 16;
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        });
-
-        const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-        polyline.setAttribute('fill', 'none');
-        polyline.setAttribute('stroke', strokeColor);
-        polyline.setAttribute('stroke-width', '1.8');
-        polyline.setAttribute('stroke-linecap', 'round');
-        polyline.setAttribute('stroke-linejoin', 'round');
-        polyline.setAttribute('points', pts.join(' '));
-        svg.appendChild(polyline);
-
-        const lastPt = pts[pts.length - 1].split(',');
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('cx', lastPt[0]);
-        dot.setAttribute('cy', lastPt[1]);
-        dot.setAttribute('r', '2.5');
-        dot.setAttribute('fill', strokeColor);
-        svg.appendChild(dot);
-      }
-
-      const ENV_DATA = {
-        ISS: 'ISS LEO • Latency: 0.4s Real-Time',
-        MOON: 'Artemis Lunar Base • Delay: 1.3s (1/6g)',
-        MARS: 'Mars Transit • Delay: 14m 20s (Offline AI Autonomous)'
-      };
-
-      function switchEnvironment(envKey) {
-        state.env = envKey;
-        el('commDelayLabel').textContent = ENV_DATA[envKey];
-        document.querySelectorAll('.env-btn').forEach((b) => {
-          b.className = b.dataset.env === envKey
-            ? 'env-btn px-2.5 py-1 rounded-lg text-xs font-medium transition bg-violet-500/20 text-violet-200 border border-violet-400/30'
-            : 'env-btn px-2.5 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition';
-        });
-        updateDashboard();
-      }
-
-      function addXP(points, reason) {
-        state.xp += points;
-        const level = Math.floor(state.xp / 200) + 1;
-        const progress = ((state.xp % 200) / 200) * 100;
-        const ranks = ['Flight Engineer', 'Bio-Specialist', 'Mission Specialist', 'Orbital Surgeon', 'Lunar Commander'];
-        const rankName = ranks[Math.min(ranks.length - 1, level - 1)];
-
-        el('xpCounterLabel').textContent = `${state.xp} XP`;
-        el('crewRankLabel').textContent = `${rankName} • Lvl ${level}`;
-        el('xpProgressBar').style.width = `${progress}%`;
-        if (reason) showToast(`+${points} XP: ${reason}`);
-      }
-
-      function logWaterIntake(ml) {
-        state.waterLoggedMl += ml;
-        state.vitals.hydrationPct = Math.min(100, state.vitals.hydrationPct + 2);
-        state.trends7d.hydration[6] = state.vitals.hydrationPct;
-        updateDashboard();
-        addXP(25, `Logged ${ml} mL Electrolyte Hydration`);
-      }
-
-      el('logWaterBtn').addEventListener('click', () => logWaterIntake(250));
-
-      function computeCountermeasures(v, env, sym) {
-        let waterMl = 2500;
-        let waterNote = 'Sip 300 mL electrolyte-balanced water every 2.5 hours to prevent microgravity plasma contraction.';
-        let kcal = env === 'MOON' ? 3000 : 2800;
-        let foodNote = 'Thermostabilized salmon, quinoa, 1,000 mg Calcium + 800 IU Vitamin D3 to prevent bone demineralization.';
-        let exMins = 60;
-        let exNote = '35 min ARED resistive squats/deadlifts (bone density) + 25 min CEVIS cycle ergometer at 75% HRmax.';
-
-        if (v.hr > 95 || v.sys > 135 || v.temp >= 37.5 || v.suitTemp >= 25 || sym.dizziness) {
-          waterMl = 3400;
-          waterNote = 'PRIORITY REHYDRATION: Ingest 500 mL sodium-potassium electrolyte solution immediately, then 250 mL every 45 mins.';
-          foodNote = 'High-potassium dried apricots, broth soup, light complex carbs; avoid caffeine and high-sodium rations.';
-          exMins = 25;
-          exNote = 'MODIFY EXERCISE: Pause heavy ARED squats until HR < 85 bpm. Perform 25 min low-resistance supine cycling only.';
-        }
-
-        if (v.rad >= 5) {
-          foodNote = 'RADIATION SHIELD DIET: Administer antioxidant ration pack (Vitamins C, E, Selenium, Omega-3 & blueberry polyphenols).';
-          exMins = 15;
-          exNote = 'SHELTER PROTOCOL: Remain inside water-wall storm shelter; perform 15 min isometric resistance band stretches.';
-        }
-
-        if (sym.nausea) {
-          foodNote = 'ANTI-NAUSEA RATION: Ginger-infused hydration pouch, dry crackers, and small frequent low-fat protein bites.';
-        }
-
-        if (v.glucose < 72) {
-          kcal += 300;
-          foodNote = 'HYPOGLYCEMIC RECOVERY: Consume 20g fast-acting dextrose gel immediately, followed by complex oat & almond bar.';
-        }
-
-        if ((v.sleep < 6.0 || sym.fatigue || sym.soreness) && v.rad < 5 && v.hr <= 95) {
-          exMins = 35;
-          exNote = 'RECOVERY PROTOCOL: 20 min moderate T2 treadmill walk + 15 min guided spinal decompression stretching.';
-        }
-
-        return { waterMl, waterNote, kcal, foodNote, exMins, exNote };
-      }
-
-      const ORGAN_PROFILES = {
-        neuro: {
-          title: 'Brain & Neurocognitive System',
-          hazard: 'HRP HAZARD: ISOLATION & CONFINEMENT',
-          evaluate: (v, sym) => {
-            if (v.sleep < 5.8 || sym.fatigue) return { level: 'red', pill: 'FATIGUE ALERT', val: `${v.sleep} hrs • Low`, steps: 'Initiate 90-min recovery sleep block, run 4-7-8 breath pacer, and defer robotic operations.' };
-            if (v.sleep < 6.8) return { level: 'amber', pill: 'MILD STRAIN', val: `${v.sleep} hrs • Fair`, steps: 'Complete 20-min power rest and run Neural Reflex Calibration drill to verify alertness.' };
-            return { level: 'green', pill: 'OPTIMAL', val: `${v.sleep} hrs • Sharp`, steps: 'Circadian rhythm aligned. Morning 480nm blue light therapy and daily journal check-in active.' };
-          }
-        },
-        cardio: {
-          title: 'Heart & Cardiovascular System',
-          hazard: 'HRP HAZARD: ALTERED GRAVITY FLUID SHIFT',
-          evaluate: (v, sym) => {
-            if (state.emergencyActive || v.hr > 112 || v.sys > 148) return { level: 'red', pill: 'SURGEON ALERT', val: `${v.hr} bpm • ${v.sys}/84`, steps: 'Capture 12-lead ECG, hydrate with 500 mL ORS electrolytes, and activate lower-body negative pressure.' };
-            if (v.hr > 92 || v.sys > 134 || sym.dizziness) return { level: 'amber', pill: 'FLUID SHIFT', val: `${v.hr} bpm • ${v.sys}/80`, steps: 'Elevated pulse or orthostatic dizziness detected. Follow increased electrolyte hydration on the right.' };
-            return { level: 'green', pill: 'NOMINAL', val: `${v.hr} bpm • ${v.sys}/76`, steps: 'Cardiac output and orthostatic tolerance nominal for current mission gravity profile.' };
-          }
-        },
-        respiratory: {
-          title: 'Metabolic & Cabin O₂ Exchange',
-          hazard: 'HRP HAZARD: CLOSED-LOOP ENVIRONMENT',
-          evaluate: (v, sym) => {
-            if (v.temp >= 38.0 || v.glucose < 68 || v.glucose > 175) return { level: 'red', pill: 'METABOLIC ALERT', val: `${v.temp}°C • ${v.glucose} mg/dL`, steps: 'Verify cabin CO₂ scrubbers and execute rapid glucose/antipyretic nutrition protocol.' };
-            if (v.temp >= 37.4 || v.glucose > 140 || sym.nausea) return { level: 'amber', pill: 'MONITOR', val: `${v.temp}°C • ${v.glucose} mg/dL`, steps: 'Slight thermoregulatory, glycemic, or vestibular drift. Follow anti-nausea ration plan.' };
-            return { level: 'green', pill: 'NOMINAL', val: `${v.temp}°C • ${v.glucose} mg/dL`, steps: 'Cabin O₂/CO₂ scrubbing and metabolic glucose utilization balanced.' };
-          }
-        },
-        skeletal: {
-          title: 'Musculoskeletal & Bone Density',
-          hazard: 'HRP HAZARD: MICROGRAVITY BONE LOSS',
-          evaluate: (v, sym) => {
-            if (v.hr > 100 || v.sleep < 6.0 || sym.soreness) return { level: 'amber', pill: 'DELOAD DAY', val: `${v.boneDensity}% BMD`, steps: 'Switch heavy ARED squats to light cycle ergometer and maintain 800 IU Vitamin D3.' };
-            return { level: 'green', pill: 'NOMINAL', val: `${v.boneDensity}% BMD`, steps: 'Cleared for full ARED resistive deadlifts and calcium-fortified space rations.' };
-          }
-        },
-        radiation: {
-          title: 'EVA Suit & Radiation Shielding',
-          hazard: 'HRP HAZARD: SPACE RADIATION & THERMAL',
-          evaluate: (v) => {
-            if (v.rad >= 10 || v.suitTemp >= 27 || v.suitBat <= 20) return { level: 'red', pill: 'SUIT / RAD ALERT', val: `${v.rad} mSv • ${v.suitTemp}°C`, steps: 'Seek polyethylene storm shelter immediately, maximize LCVG suit cooling loop, and switch to Eco-Draw.' };
-            if (v.rad >= 3 || v.suitTemp >= 24 || v.suitBat <= 40) return { level: 'amber', pill: 'WATCH', val: `${v.rad} mSv • ${v.suitTemp}°C`, steps: 'Elevated solar flux or suit thermal load. Adjust LCVG cooling loop on the left panel.' };
-            return { level: 'green', pill: 'SHIELDED', val: `${v.rad} mSv • ${v.suitTemp}°C`, steps: `Suit battery at ${v.suitBat}%, pressure ${v.suitPressure}, and hull shielding nominal.` };
-          }
-        }
-      };
-
-      function clampNumber(val, min, max, fallback) {
-        const n = Number(val);
-        return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
-      }
-
-      function updateDashboard() {
-        const v = state.vitals;
-        const sym = state.symptoms;
-
-        state.trends7d.hr[6] = v.hr;
-        state.trends7d.rad[6] = v.rad;
-
-        el('metricHr').textContent = `${v.hr} bpm`;
-        el('metricBone').textContent = `${v.boneDensity}%`;
-        el('metricRad').textContent = `${v.rad} mSv`;
-        el('metricHydration').textContent = `${v.hydrationPct}%`;
-        el('metricBp').textContent = `${v.sys}/76 • ${v.glucose}`;
-        el('metricTemp').textContent = `${v.temp}°C • ${v.sleep}h`;
-
-        renderSparkline('sparkHr', state.trends7d.hr, '#34d399');
-        renderSparkline('sparkBone', state.trends7d.bone, '#a78bfa');
-        renderSparkline('sparkRad', state.trends7d.rad, '#fbbf24');
-        renderSparkline('sparkHydration', state.trends7d.hydration, '#38bdf8');
-
-        // Dedicated EVA Suit Telemetry Module (Strictly EVA Suit Details)
-        el('suitTempVal').textContent = `${v.suitTemp.toFixed(1)} °C`;
-        el('suitTempVal').className = v.suitTemp >= 26 ? 'font-mono font-bold text-rose-400' : v.suitTemp >= 23.5 ? 'font-mono font-bold text-amber-400' : 'font-mono font-bold text-white';
-        const estHours = ((v.suitBat / 100) * (v.ecoPower ? 8.5 : 7.2)).toFixed(1);
-        el('suitBatteryVal').textContent = `${v.suitBat}% • ${estHours}h`;
-        el('suitBatteryBar').style.width = `${v.suitBat}%`;
-        el('suitBatteryBar').className = v.suitBat <= 25 ? 'h-full bg-rose-500 transition-all' : v.suitBat <= 45 ? 'h-full bg-amber-400 transition-all' : 'h-full bg-emerald-400 transition-all';
-        el('suitSublimatorVal').textContent = `${v.suitSublimator}%`;
-        el('suitPressureVal').textContent = v.suitPressure;
-        el('suitGasVal').textContent = `${v.suitO2}% • ${v.suitCo2} mmHg`;
-        el('suitStatusTag').textContent = v.ecoPower ? 'ECO-DRAW ON' : 'LCVG ACTIVE';
-
-        let worst = state.emergencyActive ? 'red' : 'green';
-        const statuses = {};
-        Object.keys(ORGAN_PROFILES).forEach((k) => {
-          const r = ORGAN_PROFILES[k].evaluate(v, sym);
-          statuses[k] = state.emergencyActive ? 'red' : r.level;
-          if (r.level === 'red') worst = 'red';
-          else if (r.level === 'amber' && worst !== 'red') worst = 'amber';
-        });
-
-        const badge = el('overallBadge');
-        if (worst === 'red') {
-          badge.textContent = state.emergencyActive ? 'EMERGENCY' : 'CRITICAL';
-          badge.className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40';
-        } else if (worst === 'amber') {
-          badge.textContent = 'ATTENTION';
-          badge.className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40';
-        } else {
-          badge.textContent = 'NOMINAL';
-          badge.className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
-        }
-
-        const prof = ORGAN_PROFILES[state.selectedOrgan];
-        const evalRes = prof.evaluate(v, sym);
-        el('organHazardTag').textContent = prof.hazard;
-        el('organTitle').textContent = prof.title;
-        el('organStatusPill').textContent = evalRes.pill;
-        el('organMetricVal').textContent = evalRes.val;
-        el('actionSteps').textContent = evalRes.steps;
-
-        const pill = el('organStatusPill');
-        const box = el('actionBox');
-        const actTitle = el('actionTitle');
-        if (evalRes.level === 'red') {
-          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40 shrink-0';
-          box.className = 'p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30';
-          actTitle.className = 'text-[11px] font-mono uppercase font-semibold text-rose-300';
-        } else if (evalRes.level === 'amber') {
-          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0';
-          box.className = 'p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30';
-          actTitle.className = 'text-[11px] font-mono uppercase font-semibold text-amber-300';
-        } else {
-          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0';
-          box.className = 'p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25';
-          actTitle.className = 'text-[11px] font-mono uppercase font-semibold text-emerald-300';
-        }
-
-        const rx = computeCountermeasures(v, state.env, sym);
-        el('rxWaterTarget').textContent = `${rx.waterMl.toLocaleString()} mL / sol`;
-        el('rxWaterSchedule').textContent = rx.waterNote;
-        el('waterLoggedBadge').textContent = `Logged: ${state.waterLoggedMl.toLocaleString()} mL`;
-        const waterPct = Math.min(100, Math.round((state.waterLoggedMl / rx.waterMl) * 100));
-        el('waterProgressBar').style.width = `${waterPct}%`;
-
-        el('rxCaloriesTarget').textContent = `${rx.kcal.toLocaleString()} kcal`;
-        el('rxFoodPlan').textContent = rx.foodNote;
-        el('rxExerciseDuration').textContent = `${rx.exMins} min / sol`;
-        el('rxExercisePlan').textContent = rx.exNote;
-
-        document.querySelectorAll('.organ-pill').forEach((btn) => {
-          const active = btn.dataset.organ === state.selectedOrgan;
-          btn.className = active
-            ? 'organ-pill px-2.5 py-1.5 rounded-lg text-xs font-medium bg-violet-500/20 text-violet-200 border border-violet-400/40 transition'
-            : 'organ-pill px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] text-slate-400 border border-white/10 hover:text-slate-200 transition';
-        });
-
-        if (window.__update3DNodes) {
-          window.__update3DNodes(statuses, state.selectedOrgan);
-        }
-      }
-
-      // =========================================================================
-      // 5. LIVE WEBCAM rPPG HEART-RATE & OCULAR FATIGUE SCANNER
+      // 5. LIVE WEBCAM rPPG HEART-RATE & FATIGUE SCANNER
       // =========================================================================
       let rppgStream = null;
-      let rppgTimer = null;
-      let scannedBpm = null;
-
-      function openRppgScanner() {
-        el('rppgModal').classList.remove('hidden');
-      }
+      let rppgInterval = null;
+      let scannedBpm = 0;
 
       function stopRppgCamera() {
-        clearInterval(rppgTimer);
-        rppgTimer = null;
+        clearInterval(rppgInterval);
         if (rppgStream) {
           rppgStream.getTracks().forEach((t) => t.stop());
           rppgStream = null;
         }
-        el('rppgVideo').classList.add('hidden');
+        const vid = el('rppgVideo');
+        if (vid) vid.classList.add('hidden');
       }
 
-      el('openRppgModalBtn').addEventListener('click', openRppgScanner);
+      function openRppgScannerModal() {
+        el('rppgModal').classList.remove('hidden');
+        el('rppgReticleLabel').textContent = 'READY FOR SCAN';
+        el('syncRppgVitalsBtn').disabled = true;
+      }
+
+      el('openRppgModalBtn').addEventListener('click', openRppgScannerModal);
       el('closeRppgModal').addEventListener('click', () => {
         stopRppgCamera();
         el('rppgModal').classList.add('hidden');
       });
 
       el('startRppgScanBtn').addEventListener('click', async () => {
-        const video = el('rppgVideo');
+        const vid = el('rppgVideo');
         const canvas = el('rppgOffscreenCanvas');
         const ctx = canvas.getContext('2d');
-        const reticle = el('rppgReticleLabel');
+        const label = el('rppgReticleLabel');
 
-        stopRppgCamera();
-        el('syncRppgVitalsBtn').disabled = true;
-        reticle.textContent = 'INITIALIZING OPTICAL SENSOR...';
-
-        let usingWebcam = false;
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          try {
-            rppgStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-            video.srcObject = rppgStream;
-            await video.play();
-            video.classList.remove('hidden');
-            usingWebcam = true;
-          } catch (err) {
-            usingWebcam = false;
+        let cameraLive = false;
+        try {
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            rppgStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 320, height: 240 } });
+            vid.srcObject = rppgStream;
+            await vid.play();
+            vid.classList.remove('hidden');
+            cameraLive = true;
           }
+        } catch (err) {
+          cameraLive = false;
         }
 
-        let elapsed = 0;
+        let ticks = 0;
         const greenSamples = [];
-        reticle.textContent = usingWebcam ? 'LIVE rPPG PULSE CAPTURE...' : 'SIMULATED OPTICAL PULSE...';
+        label.textContent = cameraLive ? 'SAMPLING OPTICAL PULSE...' : 'SIMULATING OPTICAL PULSE...';
 
-        rppgTimer = setInterval(() => {
-          elapsed += 0.25;
-          if (usingWebcam && video.readyState >= 2) {
-            ctx.drawImage(video, 0, 0, 64, 64);
-            const frame = ctx.getImageData(16, 16, 32, 32).data;
-            let greenSum = 0;
-            for (let i = 0; i < frame.length; i += 4) greenSum += frame[i + 1];
-            greenSamples.push(greenSum / (frame.length / 4));
-          } else {
-            greenSamples.push(128 + Math.sin(elapsed * 7.5) * 4 + (Math.random() - 0.5));
+        clearInterval(rppgInterval);
+        rppgInterval = setInterval(() => {
+          ticks++;
+          let gVal = 128 + Math.sin(ticks * 0.7) * 6;
+          if (cameraLive && vid.readyState >= 2) {
+            ctx.drawImage(vid, 0, 0, 64, 64);
+            const frame = ctx.getImageData(20, 20, 24, 24).data;
+            let sum = 0;
+            for (let i = 1; i < frame.length; i += 4) sum += frame[i];
+            gVal = sum / (frame.length / 4);
           }
+          greenSamples.push(gVal);
+          const est = Math.round(clampNumber(66 + ((gVal % 14) - 5), 58, 96, 71));
+          el('rppgBpmVal').textContent = `${est} bpm`;
+          el('rppgQualityVal').textContent = `${Math.min(99, 60 + ticks * 2)}%`;
 
-          const pct = Math.min(100, Math.round((elapsed / 6) * 100));
-          el('rppgQualityVal').textContent = `${Math.max(82, pct)}%`;
-
-          if (elapsed >= 6) {
-            clearInterval(rppgTimer);
-            rppgTimer = null;
-            // Compute realistic BPM from oscillation variance bounded to physiological range
-            const variance = greenSamples.reduce((acc, v, i, arr) => i ? acc + Math.abs(v - arr[i - 1]) : 0, 0) / greenSamples.length;
-            scannedBpm = Math.min(96, Math.max(62, Math.round(66 + (variance % 14))));
-            const fatigue = state.vitals.sleep < 6.2 ? 'MODERATE' : 'LOW (ALERT)';
-
-            el('rppgBpmVal').textContent = `${scannedBpm} bpm`;
-            el('rppgQualityVal').textContent = '96%';
-            el('rppgFatigueVal').textContent = fatigue;
-            reticle.textContent = 'SCAN COMPLETE';
-
-            const syncBtn = el('syncRppgVitalsBtn');
-            syncBtn.disabled = false;
-            syncBtn.className = 'flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition';
+          if (ticks >= 16) {
+            clearInterval(rppgInterval);
+            scannedBpm = est;
+            label.textContent = 'SCAN COMPLETE';
+            el('rppgFatigueVal').textContent = state.vitals.sleep < 6.5 ? 'MODERATE' : 'LOW (ALERT)';
+            el('syncRppgVitalsBtn').disabled = false;
+            el('syncRppgVitalsBtn').className = 'flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition';
             stopRppgCamera();
-            speakAI(`Biometric rPPG scan complete. Heart rate measured at ${scannedBpm} beats per minute. Ocular fatigue ${fatigue}.`);
           }
-        }, 250);
+        }, 450);
       });
 
       el('syncRppgVitalsBtn').addEventListener('click', () => {
         if (!scannedBpm) return;
         state.vitals.hr = scannedBpm;
+        state.trends7d.hr[6] = scannedBpm;
         el('rppgModal').classList.add('hidden');
         updateDashboard();
-        addXP(35, `rPPG Biometric Scan (${scannedBpm} bpm)`);
+        addXP(35, 'rPPG Optical Pulse Synced');
+        speakAI(`Optical pulse scan complete. Resting heart rate calibrated to ${scannedBpm} beats per minute.`);
       });
 
       // =========================================================================
@@ -1715,469 +1526,417 @@
       el('openAiDrawerBtn').addEventListener('click', () => el('aiSurgeonDrawer').classList.remove('hidden'));
       el('closeAiDrawerBtn').addEventListener('click', () => el('aiSurgeonDrawer').classList.add('hidden'));
 
-      function appendAiChatBubble(sender, text, isUser) {
+      function diagnoseSpaceSymptom(queryText) {
+        const q = queryText.toLowerCase();
+        if (q.includes('vision') || q.includes('headache') || q.includes('eye') || q.includes('blur')) {
+          return {
+            tag: 'SUSPECTED SANS (SPACEFLIGHT NEURO-OCULAR SYNDROME)',
+            reply: 'Cephalad fluid shift in microgravity can elevate intracranial & intraocular pressure. Protocol: Perform an ocular ultrasound scan, reduce sodium intake below 2,000 mg/sol, and avoid inverted posture.'
+          };
+        }
+        if (q.includes('dizz') || q.includes('stand') || q.includes('lightheaded') || q.includes('faint')) {
+          return {
+            tag: 'ORTHOSTATIC INTOLERANCE / PLASMA VOLUME DEFICIT',
+            reply: 'Microgravity reduces circulating plasma volume by 10–15%. Protocol: Immediately ingest 500 mL isotonic electrolyte solution, engage lower-body compression cuffs, and perform ARED resistive leg contractions.'
+          };
+        }
+        if (q.includes('fatigue') || q.includes('insomnia') || q.includes('sleep') || q.includes('tired')) {
+          return {
+            tag: 'CIRCADIAN DESYNCHRONIZATION (90-MIN ORBITAL CYCLE)',
+            reply: '16 sunrises per 24h disrupt melatonin secretion. Protocol: Use 480nm blue-enriched light on waking, dim cabin LEDs 90 minutes pre-sleep, and run a 4-7-8 Orbital Breath Pacer session.'
+          };
+        }
+        if (q.includes('nausea') || q.includes('radiation') || q.includes('solar')) {
+          return {
+            tag: 'SPACE ADAPTATION / RADIATION COUNTERMEASURE',
+            reply: 'Monitor dosimeter badge closely. If solar particle flux exceeds 3.0 mSv/hr, shelter inside the water-lined crew quarters and take oral antioxidant radioprotectant rations.'
+          };
+        }
+        return {
+          tag: 'NASA HRP GENERAL TELEMETRY ASSESSMENT',
+          reply: `Current vitals show HR ${state.vitals.hr} bpm, BP ${state.vitals.sys}/76 mmHg, and cumulative dose ${state.vitals.rad} mSv. Maintain 2,500 mL hydration and complete your 60-minute ARED + CEVIS exercise block.`
+        };
+      }
+
+      function appendAiChatBubble(sender, tag, text) {
         const feed = el('aiChatFeed');
-        const bubble = document.createElement('div');
-        bubble.className = isUser
-          ? 'p-3 rounded-2xl bg-white/[0.06] border border-white/10 text-white ml-8 leading-relaxed'
+        const box = document.createElement('div');
+        box.className = sender === 'user'
+          ? 'p-3 rounded-2xl bg-white/[0.06] border border-white/10 text-white ml-6'
           : 'p-3 rounded-2xl bg-violet-500/10 border border-violet-400/25 text-slate-200 mr-4 leading-relaxed';
-
-        const tag = document.createElement('p');
-        tag.className = isUser ? 'font-mono text-[10px] text-slate-400 mb-1' : 'font-mono text-[10px] text-violet-300 mb-1';
-        tag.textContent = sender;
-
+        const header = document.createElement('p');
+        header.className = 'font-mono text-[10px] text-violet-300 mb-1';
+        header.textContent = tag;
         const body = document.createElement('p');
         body.textContent = text;
-
-        bubble.appendChild(tag);
-        bubble.appendChild(body);
-        feed.appendChild(bubble);
+        box.appendChild(header);
+        box.appendChild(body);
+        feed.appendChild(box);
         feed.scrollTop = feed.scrollHeight;
       }
 
-      function diagnoseOfflineSymptom(query) {
-        const q = query.toLowerCase();
-        if (q.includes('vision') || q.includes('blur') || q.includes('headache') || q.includes('eye')) {
-          state.selectedOrgan = 'neuro';
-          updateDashboard();
-          return 'PROBABLE SANS (Spaceflight Associated Neuro-ocular Syndrome): Caused by cephalad intracranial fluid shift in microgravity. Protocol: Perform 3D ocular ultrasound scan, apply Lower-Body Negative Pressure (LBNP) for 30 mins, and log optic nerve sheath diameter.';
-        }
-        if (q.includes('dizz') || q.includes('stand') || q.includes('lightheaded') || q.includes('faint')) {
-          state.symptoms.dizziness = true;
-          state.selectedOrgan = 'cardio';
-          updateDashboard();
-          return 'ORTHOSTATIC INTOLERANCE / PLASMA CONTRACTION: Immediately ingest 500 mL sodium-potassium electrolyte solution, engage compression garments, and follow the updated 3,400 mL hydration plan.';
-        }
-        if (q.includes('sleep') || q.includes('insomnia') || q.includes('fatigue') || q.includes('tired')) {
-          state.symptoms.fatigue = true;
-          state.selectedOrgan = 'neuro';
-          updateDashboard();
-          return 'CIRCADIAN DESYNCHRONIZATION: Orbital 90-minute sunrise cycles disrupt melatonin. Protocol: 30 min 480nm blue-enriched LED exposure upon waking, dim cabin lights 2 hours pre-sleep, and run the 4-7-8 Breath Pacer.';
-        }
-        if (q.includes('nausea') || q.includes('radiation') || q.includes('stomach')) {
-          state.symptoms.nausea = true;
-          state.selectedOrgan = 'respiratory';
-          updateDashboard();
-          return 'SPACE ADAPTATION / RADIATION PRODROME CHECK: Cross-checking dosimeter (currently nominal). Switch to ginger hydration pouch and low-fat complex rations; avoid rapid head pitch movements.';
-        }
-        return 'NASA HRP TRIAGE ASSESSMENT: Vitals cross-checked against current mission profile. Maintain 2,500+ mL electrolyte hydration, complete 60 min ARED/CEVIS countermeasures, and log any localized pain in Vitals.';
-      }
-
-      function handleAiSurgeonQuery(queryText) {
-        const clean = queryText.trim();
-        if (!clean) return;
-        appendAiChatBubble('COMMANDER', clean, true);
-        const reply = diagnoseOfflineSymptom(clean);
-        appendAiChatBubble('AI FLIGHT SURGEON • NASA HRP', reply, false);
-        speakAI(reply);
-      }
+      document.querySelectorAll('.ai-sym-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const q = chip.dataset.symquery;
+          appendAiChatBubble('user', 'COMMANDER QUERY', q);
+          const diag = diagnoseSpaceSymptom(q);
+          appendAiChatBubble('ai', diag.tag, diag.reply);
+          speakAI(diag.reply);
+        });
+      });
 
       el('aiChatForm').addEventListener('submit', (e) => {
         e.preventDefault();
         const inp = el('aiChatInput');
-        handleAiSurgeonQuery(inp.value);
+        const q = inp.value.trim();
+        if (!q) return;
         inp.value = '';
-      });
-
-      document.querySelectorAll('.ai-sym-chip').forEach((chip) => {
-        chip.addEventListener('click', () => handleAiSurgeonQuery(chip.dataset.symquery));
+        appendAiChatBubble('user', 'COMMANDER QUERY', q);
+        const diag = diagnoseSpaceSymptom(q);
+        appendAiChatBubble('ai', diag.tag, diag.reply);
+        speakAI(diag.reply);
       });
 
       // =========================================================================
-      // 7. LINEAR SPOTLIGHT COMMAND PALETTE (CTRL+K / CMD+K)
+      // 7. SPARKLINES, XP, ANTI-BOREDOM WELLNESS & PRESCRIPTIONS ENGINE
       // =========================================================================
-      const COMMANDS = [
-        { id: 'cmd-emerg', icon: 'fa-triangle-exclamation', label: 'TRIGGER CREW MEDICAL EMERGENCY BEACON', shortcut: '!', action: () => triggerEmergencyAlert() },
-        { id: 'cmd-rppg', icon: 'fa-camera', label: 'Open Live Webcam rPPG Heart-Rate Scanner', shortcut: 'R', action: () => openRppgScanner() },
-        { id: 'cmd-surg', icon: 'fa-user-doctor', label: 'Open Offline AI Flight Surgeon Co-Pilot', shortcut: 'A', action: () => el('aiSurgeonDrawer').classList.remove('hidden') },
-        { id: 'cmd-brief', icon: 'fa-volume-high', label: 'Run AI Diagnostic Voice Brief', shortcut: 'V', action: () => executeVoiceOrTextCommand('status report') },
-        { id: 'cmd-water', icon: 'fa-droplet', label: 'Log 250 mL Electrolyte Water Intake (+25 XP)', shortcut: 'W', action: () => logWaterIntake(250) },
-        { id: 'cmd-storm', icon: 'fa-radiation', label: 'Simulate Solar Particle Storm', shortcut: 'S', action: () => executeVoiceOrTextCommand('solar storm') },
-        { id: 'cmd-nom', icon: 'fa-circle-check', label: 'Restore Nominal Orbit Telemetry', shortcut: 'N', action: () => executeVoiceOrTextCommand('nominal') },
-        { id: 'cmd-mars', icon: 'fa-globe', label: 'Switch Environment: Mars Transit (14m Delay)', shortcut: 'M', action: () => executeVoiceOrTextCommand('mars mode') },
-        { id: 'cmd-pass', icon: 'fa-key', label: 'Open Passkey Rotation & Security Vault', shortcut: 'P', action: () => el('openPasskeyModalBtn').click() }
-      ];
-
-      let filteredCmds = [...COMMANDS];
-      let selectedCmdIdx = 0;
-
-      function renderCommandList() {
-        const container = el('cmdListContainer');
-        while (container.firstChild) container.removeChild(container.firstChild);
-
-        filteredCmds.forEach((c, idx) => {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = idx === selectedCmdIdx
-            ? 'w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-violet-500/20 border border-violet-400/35 text-white text-xs text-left transition'
-            : 'w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/5 text-slate-300 text-xs text-left transition';
-
-          const left = document.createElement('span');
-          const ico = document.createElement('i');
-          ico.className = `fa-solid ${c.icon} text-violet-300 mr-2.5 w-4 text-center`;
-          left.appendChild(ico);
-          left.appendChild(document.createTextNode(c.label));
-
-          const kbd = document.createElement('kbd');
-          kbd.className = 'px-1.5 py-0.5 text-[10px] font-mono rounded bg-black/50 border border-white/10 text-slate-400';
-          kbd.textContent = c.shortcut;
-
-          btn.appendChild(left);
-          btn.appendChild(kbd);
-          btn.addEventListener('click', () => {
-            closeCmdPalette();
-            c.action();
-          });
-          container.appendChild(btn);
-        });
+      function renderSparkline(svgId, series, strokeColor) {
+        const svg = el(svgId);
+        if (!svg || !series || series.length < 2) return;
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        const min = Math.min(...series);
+        const max = Math.max(...series);
+        const span = max - min || 1;
+        const pts = series.map((val, idx) => {
+          const x = (idx / (series.length - 1)) * 100;
+          const y = 21 - ((val - min) / span) * 18;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        poly.setAttribute('fill', 'none');
+        poly.setAttribute('stroke', strokeColor);
+        poly.setAttribute('stroke-width', '1.8');
+        poly.setAttribute('stroke-linecap', 'round');
+        poly.setAttribute('stroke-linejoin', 'round');
+        poly.setAttribute('points', pts);
+        svg.appendChild(poly);
       }
 
-      function openCmdPalette() {
-        if (el('appShell').classList.contains('hidden')) return;
-        el('cmdPaletteModal').classList.remove('hidden');
-        el('cmdSearchInput').value = '';
-        filteredCmds = [...COMMANDS];
-        selectedCmdIdx = 0;
-        renderCommandList();
-        el('cmdSearchInput').focus();
+      function addXP(points, reason) {
+        state.xp += points;
+        const level = Math.floor(state.xp / 200) + 1;
+        const pct = Math.min(100, ((state.xp % 200) / 200) * 100);
+        el('xpCounterLabel').textContent = `${state.xp} XP`;
+        el('crewRankLabel').textContent = `Mission Specialist • Lvl ${level}`;
+        el('xpProgressBar').style.width = `${pct}%`;
+        if (reason) showToast(`+${points} XP • ${reason}`);
       }
 
-      function closeCmdPalette() {
-        el('cmdPaletteModal').classList.add('hidden');
+      function logWaterIntake(ml) {
+        state.waterLoggedMl = Math.min(4500, state.waterLoggedMl + ml);
+        state.vitals.hydrationPct = Math.min(100, state.vitals.hydrationPct + 2);
+        state.trends7d.hydration[6] = state.vitals.hydrationPct;
+        updateDashboard();
+        addXP(25, `Hydration Logged (+${ml} mL)`);
       }
 
-      el('openCmdPaletteBtn').addEventListener('click', openCmdPalette);
-      el('cmdPaletteModal').addEventListener('click', (e) => {
-        if (e.target === el('cmdPaletteModal')) closeCmdPalette();
-      });
-
-      el('cmdSearchInput').addEventListener('input', (e) => {
-        const q = e.target.value.toLowerCase();
-        filteredCmds = COMMANDS.filter((c) => c.label.toLowerCase().includes(q));
-        selectedCmdIdx = 0;
-        renderCommandList();
-      });
-
-      window.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-          e.preventDefault();
-          if (el('cmdPaletteModal').classList.contains('hidden')) openCmdPalette();
-          else closeCmdPalette();
-          return;
-        }
-        if (el('cmdPaletteModal').classList.contains('hidden')) return;
-        if (e.key === 'Escape') closeCmdPalette();
-        else if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          selectedCmdIdx = (selectedCmdIdx + 1) % Math.max(1, filteredCmds.length);
-          renderCommandList();
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          selectedCmdIdx = (selectedCmdIdx - 1 + Math.max(1, filteredCmds.length)) % Math.max(1, filteredCmds.length);
-          renderCommandList();
-        } else if (e.key === 'Enter' && filteredCmds[selectedCmdIdx]) {
-          e.preventDefault();
-          const chosen = filteredCmds[selectedCmdIdx];
-          closeCmdPalette();
-          chosen.action();
-        }
-      });
-
-      // =========================================================================
-      // 5. THREE.JS 3D INTERACTIVE HOLOGRAPHIC ASTRONAUT HUD
-      // =========================================================================
-      function init3DHologram() {
-        const container = el('holoContainer');
-        const canvas = el('holoCanvas');
-        if (!window.THREE || !container || !canvas) return;
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 100);
-        camera.position.set(0, 0.15, 5.1);
-
-        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.setSize(container.clientWidth, container.clientHeight);
-
-        const humanGroup = new THREE.Group();
-        scene.add(humanGroup);
-
-        const starGeo = new THREE.BufferGeometry();
-        const starCount = 160;
-        const starPositions = new Float32Array(starCount * 3);
-        for (let i = 0; i < starCount * 3; i++) starPositions[i] = (Math.random() - 0.5) * 11;
-        starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-        const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xa78bfa, size: 0.035, transparent: true, opacity: 0.55 }));
-        scene.add(stars);
-
-        const wireMat = new THREE.MeshBasicMaterial({ color: 0x818cf8, wireframe: true, transparent: true, opacity: 0.24 });
-        const coreMat = new THREE.MeshBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.08 });
-
-        function addPart(geo, x, y, z, rz = 0) {
-          const m = new THREE.Mesh(geo, wireMat);
-          m.position.set(x, y, z);
-          m.rotation.z = rz;
-          humanGroup.add(m);
-          const inner = new THREE.Mesh(geo, coreMat);
-          inner.position.copy(m.position);
-          inner.rotation.copy(m.rotation);
-          inner.scale.setScalar(0.95);
-          humanGroup.add(inner);
-        }
-
-        addPart(new THREE.SphereGeometry(0.35, 18, 18), 0, 1.54, 0);
-        addPart(new THREE.CylinderGeometry(0.14, 0.17, 0.22, 12), 0, 1.16, 0);
-        addPart(new THREE.CylinderGeometry(0.49, 0.36, 1.16, 16, 4), 0, 0.50, 0);
-        addPart(new THREE.BoxGeometry(0.56, 0.85, 0.26), 0, 0.58, -0.34);
-        addPart(new THREE.CylinderGeometry(0.36, 0.30, 0.34, 14), 0, -0.22, 0);
-
-        addPart(new THREE.CylinderGeometry(0.12, 0.10, 0.72, 10), -0.65, 0.64, 0, 0.18);
-        addPart(new THREE.CylinderGeometry(0.10, 0.08, 0.66, 10), -0.78, -0.02, 0.06, 0.08);
-        addPart(new THREE.CylinderGeometry(0.12, 0.10, 0.72, 10), 0.65, 0.64, 0, -0.18);
-        addPart(new THREE.CylinderGeometry(0.10, 0.08, 0.66, 10), 0.78, -0.02, 0.06, -0.08);
-
-        addPart(new THREE.CylinderGeometry(0.16, 0.13, 0.84, 12), -0.22, -0.82, 0, -0.03);
-        addPart(new THREE.CylinderGeometry(0.13, 0.10, 0.80, 12), -0.24, -1.60, 0, 0);
-        addPart(new THREE.CylinderGeometry(0.16, 0.13, 0.84, 12), 0.22, -0.82, 0, 0.03);
-        addPart(new THREE.CylinderGeometry(0.13, 0.10, 0.80, 12), 0.24, -1.60, 0, 0);
-
-        const ring1 = new THREE.Mesh(
-          new THREE.RingGeometry(1.05, 1.12, 48),
-          new THREE.MeshBasicMaterial({ color: 0xa78bfa, side: THREE.DoubleSide, transparent: true, opacity: 0.38 })
-        );
-        ring1.rotation.x = Math.PI / 2;
-        ring1.position.y = -2.02;
-        humanGroup.add(ring1);
-
-        const nodeCoords = {
-          neuro: new THREE.Vector3(0, 1.56, 0.28),
-          cardio: new THREE.Vector3(0.14, 0.72, 0.34),
-          respiratory: new THREE.Vector3(-0.16, 0.64, 0.32),
-          skeletal: new THREE.Vector3(-0.23, -0.80, 0.20),
-          radiation: new THREE.Vector3(0, 0.18, 0.38)
-        };
-
-        const clickTargets = [];
-        const nodeMap = {};
-
-        Object.entries(nodeCoords).forEach(([key, pos]) => {
-          const mesh = new THREE.Mesh(
-            new THREE.SphereGeometry(0.11, 16, 16),
-            new THREE.MeshBasicMaterial({ color: 0x10b981 })
-          );
-          mesh.position.copy(pos);
-          mesh.userData = { organKey: key };
-
-          const halo = new THREE.Mesh(
-            new THREE.RingGeometry(0.14, 0.20, 24),
-            new THREE.MeshBasicMaterial({ color: 0xa78bfa, side: THREE.DoubleSide, transparent: true, opacity: 0.8 })
-          );
-          mesh.add(halo);
-
-          humanGroup.add(mesh);
-          clickTargets.push(mesh);
-          nodeMap[key] = { mesh, halo };
-        });
-
-        window.__update3DNodes = (statuses, activeKey) => {
-          const colors = { green: 0x10b981, amber: 0xf59e0b, red: 0xef4444 };
-          Object.keys(nodeMap).forEach((k) => {
-            const { mesh, halo } = nodeMap[k];
-            const hex = colors[statuses[k]] || 0x10b981;
-            mesh.material.color.setHex(hex);
-            halo.material.color.setHex(k === activeKey ? 0xffffff : hex);
-            mesh.scale.setScalar(k === activeKey ? 1.38 : 1.0);
-          });
-        };
-
-        const raycaster = new THREE.Raycaster();
-        const pointer = new THREE.Vector2();
-        let dragging = false;
-        let prevX = 0;
-        let dragDist = 0;
-        let autoRot = true;
-
-        function startDrag(x) { dragging = true; prevX = x; dragDist = 0; autoRot = false; }
-        function moveDrag(x) {
-          if (!dragging) return;
-          const dx = x - prevX;
-          dragDist += Math.abs(dx);
-          humanGroup.rotation.y += dx * 0.012;
-          prevX = x;
-        }
-        function endDrag(x, y) {
-          dragging = false;
-          if (dragDist < 6) {
-            const rect = canvas.getBoundingClientRect();
-            pointer.x = ((x - rect.left) / rect.width) * 2 - 1;
-            pointer.y = -((y - rect.top) / rect.height) * 2 + 1;
-            raycaster.setFromCamera(pointer, camera);
-            const hits = raycaster.intersectObjects(clickTargets, true);
-            if (hits.length > 0) {
-              let obj = hits[0].object;
-              while (obj && !obj.userData.organKey) obj = obj.parent;
-              if (obj && obj.userData.organKey) {
-                state.selectedOrgan = obj.userData.organKey;
-                updateDashboard();
-              }
-            }
-          }
-        }
-
-        canvas.addEventListener('mousedown', (e) => startDrag(e.clientX));
-        window.addEventListener('mousemove', (e) => moveDrag(e.clientX));
-        window.addEventListener('mouseup', (e) => { if (dragging) endDrag(e.clientX, e.clientY); });
-        canvas.addEventListener('touchstart', (e) => { if (e.touches.length === 1) startDrag(e.touches[0].clientX); }, { passive: true });
-        canvas.addEventListener('touchmove', (e) => { if (e.touches.length === 1) moveDrag(e.touches[0].clientX); }, { passive: true });
-        canvas.addEventListener('touchend', (e) => { if (e.changedTouches.length === 1) endDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
-
-        el('resetCamBtn').addEventListener('click', () => { humanGroup.rotation.y = 0; autoRot = true; });
-
-        window.addEventListener('resize', () => {
-          if (!container.clientWidth || !container.clientHeight) return;
-          camera.aspect = container.clientWidth / container.clientHeight;
-          camera.updateProjectionMatrix();
-          renderer.setSize(container.clientWidth, container.clientHeight);
-        });
-
-        let tick = 0;
-        function animate() {
-          requestAnimationFrame(animate);
-          tick += 0.03;
-          stars.rotation.y += 0.0008;
-          if (autoRot) humanGroup.rotation.y += 0.0045;
-          const activeNode = nodeMap[state.selectedOrgan];
-          if (activeNode) activeNode.halo.scale.setScalar(1 + Math.sin(tick * 2.4) * 0.16);
-          renderer.render(scene, camera);
-        }
-        animate();
-        updateDashboard();
-      }
-
-      // =========================================================================
-      // 6. ANTI-BOREDOM WELLNESS TOOLS & PRESET / MODAL HANDLERS
-      // =========================================================================
-      let breathInterval = null;
-      el('toggleBreathBtn').addEventListener('click', () => {
-        const halo = el('breathHalo');
-        const inst = el('breathInstruction');
-        const btn = el('toggleBreathBtn');
-
-        if (breathInterval) {
-          clearInterval(breathInterval);
-          breathInterval = null;
-          halo.style.transform = 'scale(1)';
-          inst.textContent = 'Lowers HR & isolation stress';
-          btn.textContent = 'Start Cycle (+25 XP)';
-          return;
-        }
-
-        let phase = 0;
-        const phases = [
-          { text: 'Inhale slowly (4s)...', scale: 'scale(1.75)' },
-          { text: 'Hold calmly (4s)...', scale: 'scale(1.75)' },
-          { text: 'Exhale smoothly (4s)...', scale: 'scale(0.95)' }
-        ];
-        const runPhase = () => {
-          inst.textContent = phases[phase].text;
-          halo.style.transform = phases[phase].scale;
-          if (phase === 2) addXP(25, 'Orbital Breathwork Cycle');
-          phase = (phase + 1) % phases.length;
-        };
-        btn.textContent = 'Stop Pacer';
-        runPhase();
-        breathInterval = setInterval(runPhase, 4000);
-      });
-
-      let reflexState = 'idle';
-      let reflexStart = 0;
-      let reflexTimer = null;
-      let bestMs = 245;
-
-      el('reflexGameBtn').addEventListener('click', () => {
-        const btn = el('reflexGameBtn');
-        const prompt = el('reflexPrompt');
-
-        if (reflexState === 'idle') {
-          reflexState = 'waiting';
-          btn.textContent = 'WAIT FOR GREEN SIGNAL...';
-          btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[11px] font-mono font-semibold transition';
-          prompt.textContent = 'Hold steady — click when shield turns GREEN!';
-          reflexTimer = setTimeout(() => {
-            reflexState = 'ready';
-            reflexStart = performance.now();
-            btn.textContent = 'CLICK NOW — CALIBRATE!';
-            btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-[11px] font-mono font-bold transition';
-          }, 1400 + Math.random() * 2000);
-        } else if (reflexState === 'waiting') {
-          clearTimeout(reflexTimer);
-          reflexState = 'idle';
-          btn.textContent = 'Too Early! Retry';
-          btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-rose-500/20 border border-rose-400/40 text-rose-300 text-[11px] font-mono font-semibold transition';
-        } else if (reflexState === 'ready') {
-          const reaction = Math.round(performance.now() - reflexStart);
-          reflexState = 'idle';
-          if (reaction < bestMs) {
-            bestMs = reaction;
-            el('reflexScoreLabel').textContent = `Best: ${bestMs}ms`;
-          }
-          prompt.textContent = `Response: ${reaction}ms — Neuro-reflexes sharp!`;
-          btn.textContent = 'Launch Shield Calibration';
-          btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-[11px] font-mono font-semibold transition';
-          addXP(40, `Neural Reflex (${reaction}ms)`);
-        }
-      });
-
-      let audioCtx = null;
-      el('ambientAudioBtn').addEventListener('click', () => {
-        if (!audioCtx) {
-          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-          if (!AudioContextClass) return;
-          audioCtx = new AudioContextClass();
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(64, audioCtx.currentTime);
-          gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start();
-          el('audioIcon').className = 'fa-solid fa-volume-high text-violet-300';
-          el('audioLabel').textContent = 'Cabin Hum: ON';
-          showToast('ISS life-support ambient acoustics enabled.');
-        } else {
-          audioCtx.close();
-          audioCtx = null;
-          el('audioIcon').className = 'fa-solid fa-volume-xmark text-slate-400';
-          el('audioLabel').textContent = 'Cabin Hum: OFF';
-        }
-      });
-
-      el('coolSuitBtn').addEventListener('click', () => {
-        state.vitals.suitTemp = Math.max(15.0, Number((state.vitals.suitTemp - 1.5).toFixed(1)));
-        updateDashboard();
-      });
-
-      el('warmSuitBtn').addEventListener('click', () => {
-        state.vitals.suitTemp = Math.min(34.0, Number((state.vitals.suitTemp + 1.5).toFixed(1)));
-        updateDashboard();
-      });
-
-      el('ecoPowerBtn').addEventListener('click', () => {
-        state.vitals.ecoPower = !state.vitals.ecoPower;
-        updateDashboard();
-        showToast(state.vitals.ecoPower ? 'EVA Suit Eco-Draw enabled (+18% battery life).' : 'Standard LCVG power mode restored.');
-      });
+      el('logWaterBtn').addEventListener('click', () => logWaterIntake(250));
 
       document.querySelectorAll('.task-xp-check').forEach((chk) => {
         chk.addEventListener('change', () => {
-          if (chk.checked) addXP(Number(chk.dataset.xp || 25), 'Countermeasure Completed');
+          if (chk.checked) addXP(Number(chk.dataset.xp || 30), 'Countermeasure Completed');
         });
       });
+
+      // EVA Suit Loop Controls
+      el('coolSuitBtn').addEventListener('click', () => {
+        state.vitals.suitTemp = Number(Math.max(12.0, state.vitals.suitTemp - 1.0).toFixed(1));
+        updateDashboard();
+        showToast(`LCVG Cooling Loop engaged: ${state.vitals.suitTemp} °C`);
+      });
+      el('warmSuitBtn').addEventListener('click', () => {
+        state.vitals.suitTemp = Number(Math.min(34.0, state.vitals.suitTemp + 1.0).toFixed(1));
+        updateDashboard();
+        showToast(`Suit thermal heater engaged: ${state.vitals.suitTemp} °C`);
+      });
+      el('ecoPowerBtn').addEventListener('click', () => {
+        state.vitals.ecoPower = !state.vitals.ecoPower;
+        updateDashboard();
+        showToast(state.vitals.ecoPower ? 'Suit Eco-Draw enabled (avoids non-essential avionics).' : 'Standard suit power draw active.');
+      });
+
+      // Orbital Breath Pacer
+      let breathInterval = null;
+      let breathRunning = false;
+      el('toggleBreathBtn').addEventListener('click', () => {
+        const halo = el('breathHalo');
+        const instr = el('breathInstruction');
+        const btn = el('toggleBreathBtn');
+        if (breathRunning) {
+          clearInterval(breathInterval);
+          breathRunning = false;
+          halo.style.transform = 'scale(1)';
+          instr.textContent = 'Lowers HR & isolation stress';
+          btn.textContent = 'Start Cycle (+25 XP)';
+          return;
+        }
+        breathRunning = true;
+        btn.textContent = 'Stop Pacer';
+        let step = 0;
+        const phases = [
+          { text: 'Inhale slowly (4s)...', scale: 1.75 },
+          { text: 'Hold breath (4s)...', scale: 1.75 },
+          { text: 'Exhale smoothly (4s)...', scale: 0.9 }
+        ];
+        const runStep = () => {
+          const p = phases[step % phases.length];
+          instr.textContent = p.text;
+          halo.style.transform = `scale(${p.scale})`;
+          if (step === 3) addXP(25, 'Orbital Breathwork Cycle Complete');
+          step++;
+        };
+        runStep();
+        breathInterval = setInterval(runStep, 4000);
+      });
+
+      // Neural Reflex Drill
+      let reflexWaiting = false;
+      let reflexStart = 0;
+      el('reflexGameBtn').addEventListener('click', () => {
+        const btn = el('reflexGameBtn');
+        const prompt = el('reflexPrompt');
+        if (reflexWaiting) {
+          const rt = Math.round(performance.now() - reflexStart);
+          reflexWaiting = false;
+          btn.textContent = 'Launch Shield Calibration';
+          btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-[11px] font-mono font-semibold transition';
+          prompt.textContent = `Reaction time: ${rt} ms (Nominal < 320 ms)`;
+          el('reflexScoreLabel').textContent = `Last: ${rt}ms`;
+          addXP(40, `Neural Reflex Drill (${rt} ms)`);
+          return;
+        }
+        prompt.textContent = 'Wait for GREEN flash, then click immediately...';
+        btn.textContent = 'HOLD STEADY...';
+        setTimeout(() => {
+          reflexWaiting = true;
+          reflexStart = performance.now();
+          btn.textContent = 'CLICK NOW! SHIELD PULSE';
+          btn.className = 'mt-2 w-full py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-[11px] font-mono font-bold transition';
+        }, 1200 + Math.random() * 1600);
+      });
+
+      // Web Audio Cabin Hum Synthesizer
+      let cabinAudioCtx = null;
+      let cabinOsc = null;
+      el('ambientAudioBtn').addEventListener('click', () => {
+        if (cabinOsc) {
+          cabinOsc.stop();
+          cabinOsc = null;
+          el('audioLabel').textContent = 'Cabin Hum: OFF';
+          el('audioIcon').className = 'fa-solid fa-volume-xmark text-slate-400';
+          return;
+        }
+        try {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          cabinAudioCtx = new AudioContextClass();
+          cabinOsc = cabinAudioCtx.createOscillator();
+          const gain = cabinAudioCtx.createGain();
+          cabinOsc.type = 'sine';
+          cabinOsc.frequency.value = 64;
+          gain.gain.value = 0.035;
+          cabinOsc.connect(gain);
+          gain.connect(cabinAudioCtx.destination);
+          cabinOsc.start();
+          el('audioLabel').textContent = 'Cabin Hum: ON';
+          el('audioIcon').className = 'fa-solid fa-volume-high text-violet-300';
+        } catch (err) {
+          showToast('Audio context blocked by browser.');
+        }
+      });
+
+      // =========================================================================
+      // 8. ENVIRONMENT SWITCHER, PRESETS & MASTER DASHBOARD UPDATER
+      // =========================================================================
+      function switchEnvironment(envKey) {
+        if (!ENV_META[envKey]) return;
+        state.env = envKey;
+        el('commDelayLabel').textContent = ENV_META[envKey].delay;
+        document.querySelectorAll('.env-btn').forEach((b) => {
+          const active = b.dataset.env === envKey;
+          b.className = active
+            ? 'env-btn px-2.5 py-1 rounded-lg text-xs font-medium transition bg-violet-500/20 text-violet-200 border border-violet-400/30'
+            : 'env-btn px-2.5 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition';
+        });
+        updateDashboard();
+      }
 
       document.querySelectorAll('.env-btn').forEach((btn) => {
         btn.addEventListener('click', () => switchEnvironment(btn.dataset.env));
       });
+
+      function applyPreset(presetName) {
+        standDownEmergency();
+        if (presetName === 'nominal') {
+          Object.assign(state.vitals, {
+            hr: 68, sys: 118, glucose: 94, temp: 36.8, sleep: 7.4, rad: 0.6,
+            boneDensity: 99.2, hydrationPct: 96, suitTemp: 18.5, suitBat: 94
+          });
+          Object.assign(state.symptoms, { dizziness: false, fatigue: false, soreness: false, nausea: false });
+          state.selectedOrgan = 'neuro';
+        } else if (presetName === 'dehydration') {
+          Object.assign(state.vitals, {
+            hr: 102, sys: 138, glucose: 88, temp: 37.3, sleep: 6.1, rad: 0.8,
+            boneDensity: 98.9, hydrationPct: 81, suitTemp: 22.0, suitBat: 86
+          });
+          Object.assign(state.symptoms, { dizziness: true, fatigue: true, soreness: false, nausea: false });
+          state.selectedOrgan = 'cardio';
+        } else if (presetName === 'radiation') {
+          Object.assign(state.vitals, {
+            hr: 116, sys: 150, glucose: 108, temp: 38.1, sleep: 5.4, rad: 12.4,
+            boneDensity: 98.7, hydrationPct: 88, suitTemp: 23.5, suitBat: 79
+          });
+          Object.assign(state.symptoms, { dizziness: false, fatigue: true, soreness: false, nausea: true });
+          state.selectedOrgan = 'radiation';
+        } else if (presetName === 'suitThermal') {
+          Object.assign(state.vitals, {
+            hr: 108, sys: 136, glucose: 91, temp: 37.8, sleep: 6.8, rad: 0.9,
+            boneDensity: 99.1, hydrationPct: 84, suitTemp: 28.5, suitBat: 62
+          });
+          Object.assign(state.symptoms, { dizziness: true, fatigue: false, soreness: true, nausea: false });
+          state.selectedOrgan = 'radiation';
+        }
+        state.trends7d.hr[6] = state.vitals.hr;
+        state.trends7d.rad[6] = state.vitals.rad;
+        state.trends7d.hydration[6] = state.vitals.hydrationPct;
+        updateDashboard();
+      }
+
+      document.querySelectorAll('.preset-btn').forEach((btn) => {
+        btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+      });
+
+      const ORGAN_PROFILES = {
+        neuro: {
+          hazard: 'HRP HAZARD: ISOLATION & CONFINEMENT',
+          title: 'Brain & Neurocognitive System',
+          getMetric: (v) => `${v.sleep.toFixed(1)} hrs sleep • ${state.symptoms.fatigue ? 'Fatigued' : 'Sharp'}`,
+          getStatus: (v) => (v.sleep < 6.0 || state.symptoms.fatigue ? 'ATTENTION' : 'OPTIMAL'),
+          getAction: (v) => v.sleep < 6.0 || state.symptoms.fatigue
+            ? 'Circadian sleep deficit detected. Engage 480nm morning light therapy, run 4-7-8 breathwork, and avoid complex EVA tasks.'
+            : 'Maintain blue-enriched morning cabin lighting (480nm) for 30 minutes and complete daily cognitive readiness check-in.'
+        },
+        cardio: {
+          hazard: 'HRP HAZARD: ALTERED GRAVITY & FLUID SHIFT',
+          title: 'Cardiovascular & Fluid Balance',
+          getMetric: (v) => `${v.hr} bpm • ${v.sys}/76 mmHg`,
+          getStatus: (v) => (state.emergencyActive || v.hr > 112 || v.sys > 148 ? 'CRITICAL' : (v.hr > 92 || state.symptoms.dizziness ? 'ATTENTION' : 'OPTIMAL')),
+          getAction: (v) => (v.hr > 92 || state.symptoms.dizziness)
+            ? 'Cephalad fluid shift / orthostatic risk detected. Ingest 500 mL electrolyte solution immediately and engage lower-body compression.'
+            : 'Cardiac output nominal. Continue 25-minute CEVIS cycle ergometer aerobic conditioning.'
+        },
+        respiratory: {
+          hazard: 'HRP HAZARD: HOSTILE CLOSED ENVIRONMENT',
+          title: 'Metabolic, Glucose & Cabin Gas',
+          getMetric: (v) => `${v.glucose} mg/dL • ${v.temp.toFixed(1)}°C`,
+          getStatus: (v) => (v.temp >= 38.0 || v.glucose < 70 ? 'CRITICAL' : 'OPTIMAL'),
+          getAction: (v) => v.glucose < 72
+            ? 'Hypoglycemic trend detected. Consume 30g fast-acting carbohydrate ration gel and re-check blood glucose in 15 minutes.'
+            : 'Cabin O2 partial pressure and metabolic glucose homeostasis within nominal NASA HRP flight limits.'
+        },
+        skeletal: {
+          hazard: 'HRP HAZARD: MICROGRAVITY BONE & MUSCLE LOSS',
+          title: 'Musculoskeletal & Bone Density',
+          getMetric: (v) => `${v.boneDensity.toFixed(1)}% BMD • ${state.symptoms.soreness ? 'Sore' : 'Nominal'}`,
+          getStatus: (v) => (state.symptoms.soreness || v.boneDensity < 98.5 ? 'ATTENTION' : 'OPTIMAL'),
+          getAction: () => 'Execute 35-minute ARED resistive squat & deadlift protocol plus 1,000 mg Calcium + 800 IU Vitamin D3 supplementation.'
+        },
+        radiation: {
+          hazard: 'HRP & CSA HAZARD: SPACE RADIATION & EVA SUIT',
+          title: 'EVA Suit Shielding & Radiation Dose',
+          getMetric: (v) => `${v.rad.toFixed(1)} mSv • Suit ${v.suitTemp.toFixed(1)}°C`,
+          getStatus: (v) => (v.rad >= 10 || v.suitTemp >= 27 ? 'CRITICAL' : (v.rad >= 3 || v.suitTemp >= 24 ? 'ATTENTION' : 'OPTIMAL')),
+          getAction: (v) => v.rad >= 10
+            ? 'SOLAR PARTICLE STORM ALERT: Retreat immediately to polyethylene/water-shielded storm shelter and log dosimeter reading.'
+            : (v.suitTemp >= 24
+              ? 'EVA suit thermal loop elevated. Engage LCVG cooling loop (- Cool Loop) and reduce metabolic exertion.'
+              : 'Cosmic radiation shielding and xEMU life-support thermal envelope operating nominally.')
+        }
+      };
+
+      function updateDashboard() {
+        const v = state.vitals;
+        const effectiveRad = Number((v.rad * ENV_META[state.env].radMult).toFixed(1));
+
+        el('metricHr').textContent = `${v.hr} bpm`;
+        el('metricBone').textContent = `${v.boneDensity.toFixed(1)}%`;
+        el('metricRad').textContent = `${effectiveRad} mSv`;
+        el('metricHydration').textContent = `${v.hydrationPct}%`;
+        el('metricBp').textContent = `${v.sys}/76 • ${v.glucose}`;
+        el('metricTemp').textContent = `${v.temp.toFixed(1)}°C • ${v.sleep.toFixed(1)}h`;
+
+        renderSparkline('sparkHr', state.trends7d.hr, '#34d399');
+        renderSparkline('sparkBone', state.trends7d.bone, '#a78bfa');
+        renderSparkline('sparkRad', state.trends7d.rad, '#fbbf24');
+        renderSparkline('sparkHydration', state.trends7d.hydration, '#38bdf8');
+
+        // EVA Suit Module
+        el('suitTempVal').textContent = `${v.suitTemp.toFixed(1)} °C`;
+        const estHours = (v.suitBat * (v.ecoPower ? 0.09 : 0.072)).toFixed(1);
+        el('suitBatteryVal').textContent = `${v.suitBat}% • ${estHours}h`;
+        el('suitBatteryBar').style.width = `${v.suitBat}%`;
+        el('suitSublimatorVal').textContent = `${v.suitSublimator}%`;
+        el('suitPressureVal').textContent = v.suitPressure;
+        el('suitGasVal').textContent = `${v.suitO2}% • ${v.suitCo2} mmHg`;
+        el('suitStatusTag').textContent = v.ecoPower ? 'ECO-DRAW ACTIVE' : 'LCVG ACTIVE';
+
+        // Prescriptions
+        const targetWater = (v.hr > 95 || v.sys > 135 || v.suitTemp >= 25 || state.symptoms.dizziness) ? 3400 : 2500;
+        const targetKcal = (state.env === 'MOON' ? 3000 : 2800) + (v.glucose < 72 ? 300 : 0);
+        const targetEx = effectiveRad >= 5 ? 15 : (v.hr > 95 ? 25 : 60);
+
+        el('rxWaterTarget').textContent = `${targetWater.toLocaleString()} mL / sol`;
+        el('waterLoggedBadge').textContent = `Logged: ${state.waterLoggedMl.toLocaleString()} mL`;
+        el('waterProgressBar').style.width = `${Math.min(100, (state.waterLoggedMl / targetWater) * 100)}%`;
+        el('rxCaloriesTarget').textContent = `${targetKcal.toLocaleString()} kcal`;
+        el('rxExerciseDuration').textContent = `${targetEx} min / sol`;
+
+        // Organ Card
+        const prof = ORGAN_PROFILES[state.selectedOrgan] || ORGAN_PROFILES.neuro;
+        const status = prof.getStatus({ ...v, rad: effectiveRad });
+        el('organHazardTag').textContent = prof.hazard;
+        el('organTitle').textContent = prof.title;
+        el('organMetricVal').textContent = prof.getMetric({ ...v, rad: effectiveRad });
+        el('actionSteps').textContent = prof.getAction({ ...v, rad: effectiveRad });
+
+        const pill = el('organStatusPill');
+        const box = el('actionBox');
+        if (status === 'CRITICAL' || state.emergencyActive) {
+          pill.textContent = 'CRITICAL';
+          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40 shrink-0';
+          box.className = 'p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/35';
+          el('overallBadge').textContent = 'CRITICAL';
+          el('overallBadge').className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        } else if (status === 'ATTENTION') {
+          pill.textContent = 'ATTENTION';
+          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0';
+          box.className = 'p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30';
+          el('overallBadge').textContent = 'ATTENTION';
+          el('overallBadge').className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        } else {
+          pill.textContent = 'OPTIMAL';
+          pill.className = 'px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0';
+          box.className = 'p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25';
+          el('overallBadge').textContent = 'NOMINAL';
+          el('overallBadge').className = 'text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        }
+
+        document.querySelectorAll('.organ-pill').forEach((btn) => {
+          const active = btn.dataset.organ === state.selectedOrgan;
+          btn.className = active
+            ? 'organ-pill px-2.5 py-1.5 rounded-lg text-xs font-medium bg-violet-500/20 text-violet-200 border border-violet-400/40 transition'
+            : 'organ-pill px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] text-slate-400 border border-white/10 hover:text-slate-200 transition';
+        });
+      }
 
       document.querySelectorAll('.organ-pill').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -2186,28 +1945,120 @@
         });
       });
 
-      function applyPreset(p) {
-        document.querySelectorAll('.task-xp-check').forEach((c) => { c.checked = false; });
-        if (p === 'nominal') {
-          state.vitals = { ...state.vitals, hr: 68, sys: 118, glucose: 94, temp: 36.8, sleep: 7.4, rad: 0.6, suitTemp: 18.5, suitBat: 94 };
-          state.selectedOrgan = 'neuro';
-        } else if (p === 'dehydration') {
-          state.vitals = { ...state.vitals, hr: 104, sys: 138, glucose: 108, temp: 37.5, sleep: 6.2, rad: 0.8, suitTemp: 22.0, suitBat: 76 };
-          state.selectedOrgan = 'cardio';
-        } else if (p === 'radiation') {
-          state.vitals = { ...state.vitals, hr: 116, sys: 150, glucose: 145, temp: 38.1, sleep: 5.4, rad: 14.2, suitTemp: 21.5, suitBat: 81 };
-          state.selectedOrgan = 'radiation';
-        } else if (p === 'suitThermal') {
-          state.vitals = { ...state.vitals, hr: 108, sys: 136, glucose: 88, temp: 37.8, sleep: 6.8, rad: 1.1, suitTemp: 29.5, suitBat: 22 };
-          state.selectedOrgan = 'radiation';
+      // =========================================================================
+      // 9. THREE.JS 3D HOLOGRAPHIC ASTRONAUT VIEWPORT
+      // =========================================================================
+      function init3DHologram() {
+        const container = el('holoContainer');
+        const canvas = el('holoCanvas');
+        if (!container || !canvas || typeof THREE === 'undefined') return;
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(42, container.clientWidth / Math.max(1, container.clientHeight), 0.1, 100);
+        camera.position.set(0, 0.2, 4.3);
+
+        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(container.clientWidth, container.clientHeight);
+
+        const rig = new THREE.Group();
+        scene.add(rig);
+
+        const wireMat = new THREE.MeshBasicMaterial({ color: 0x8b5cf6, wireframe: true, transparent: true, opacity: 0.34 });
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 16), wireMat);
+        head.position.y = 1.25;
+        const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.34, 1.15, 16, 6), wireMat);
+        torso.position.y = 0.45;
+        const leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 1.05, 10), wireMat);
+        leftLeg.position.set(-0.2, -0.68, 0);
+        const rightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 1.05, 10), wireMat);
+        rightLeg.position.set(0.2, -0.68, 0);
+        const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 0.92, 10), wireMat);
+        leftArm.position.set(-0.58, 0.48, 0);
+        leftArm.rotation.z = 0.18;
+        const rightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 0.92, 10), wireMat);
+        rightArm.position.set(0.58, 0.48, 0);
+        rightArm.rotation.z = -0.18;
+        rig.add(head, torso, leftLeg, rightLeg, leftArm, rightArm);
+
+        // Orbital Ring
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(1.35, 1.38, 64),
+          new THREE.MeshBasicMaterial({ color: 0x6366f1, side: THREE.DoubleSide, transparent: true, opacity: 0.35 })
+        );
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = -1.25;
+        rig.add(ring);
+
+        // Clickable Organ Nodes
+        const nodeDefs = [
+          { key: 'neuro', pos: [0, 1.28, 0.28], color: 0xa78bfa },
+          { key: 'cardio', pos: [0.12, 0.65, 0.36], color: 0x34d399 },
+          { key: 'respiratory', pos: [-0.14, 0.52, 0.36], color: 0x38bdf8 },
+          { key: 'skeletal', pos: [0.2, -0.55, 0.18], color: 0xfbbf24 },
+          { key: 'radiation', pos: [0, 0.85, -0.38], color: 0xf43f5e }
+        ];
+        const nodeMeshes = nodeDefs.map((nd) => {
+          const m = new THREE.Mesh(
+            new THREE.SphereGeometry(0.085, 16, 16),
+            new THREE.MeshBasicMaterial({ color: nd.color })
+          );
+          m.position.set(...nd.pos);
+          m.userData.organKey = nd.key;
+          rig.add(m);
+          return m;
+        });
+
+        let dragging = false;
+        let prevX = 0;
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        canvas.addEventListener('pointerdown', (e) => {
+          dragging = true;
+          prevX = e.clientX;
+          const rect = canvas.getBoundingClientRect();
+          mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+          raycaster.setFromCamera(mouse, camera);
+          const hits = raycaster.intersectObjects(nodeMeshes);
+          if (hits.length > 0 && hits[0].object.userData.organKey) {
+            state.selectedOrgan = hits[0].object.userData.organKey;
+            updateDashboard();
+          }
+        });
+        window.addEventListener('pointerup', () => { dragging = false; });
+        window.addEventListener('pointermove', (e) => {
+          if (!dragging) return;
+          rig.rotation.y += (e.clientX - prevX) * 0.012;
+          prevX = e.clientX;
+        });
+
+        el('resetCamBtn').addEventListener('click', () => { rig.rotation.y = 0; });
+
+        window.addEventListener('resize', () => {
+          if (!container.clientWidth || !container.clientHeight) return;
+          camera.aspect = container.clientWidth / container.clientHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        function animate(t) {
+          requestAnimationFrame(animate);
+          if (!dragging) rig.rotation.y += 0.004;
+          nodeMeshes.forEach((m, i) => {
+            const active = m.userData.organKey === state.selectedOrgan;
+            const s = active ? 1.45 + Math.sin(t * 0.006) * 0.2 : 1.0 + Math.sin(t * 0.004 + i) * 0.08;
+            m.scale.setScalar(s);
+          });
+          renderer.render(scene, camera);
         }
-        updateDashboard();
+        animate(0);
       }
 
-      document.querySelectorAll('.preset-btn').forEach((btn) => {
-        btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
-      });
-
+      // =========================================================================
+      // 10. MODALS, COMMAND PALETTE (CTRL+K) & ENCRYPTED VAULT SAVE
+      // =========================================================================
       const vitalsModal = el('vitalsModal');
       el('openVitalsModalBtn').addEventListener('click', () => vitalsModal.classList.remove('hidden'));
       el('closeVitalsModal').addEventListener('click', () => vitalsModal.classList.add('hidden'));
@@ -2239,8 +2090,69 @@
       el('openComplianceBtn').addEventListener('click', () => compModal.classList.remove('hidden'));
       el('closeComplianceBtn').addEventListener('click', () => compModal.classList.add('hidden'));
 
+      // Spotlight Command Palette (Ctrl+K / Cmd+K)
+      const cmdModal = el('cmdPaletteModal');
+      const COMMANDS = [
+        { label: 'Trigger Red-Alert Emergency Beacon', run: () => triggerEmergencyAlert() },
+        { label: 'Open Live Webcam rPPG Heart-Rate Scanner', run: () => openRppgScannerModal() },
+        { label: 'Open Offline AI Flight Surgeon Co-Pilot', run: () => el('aiSurgeonDrawer').classList.remove('hidden') },
+        { label: 'Log +250 mL Electrolyte Water (+25 XP)', run: () => logWaterIntake(250) },
+        { label: 'Switch Mission Environment: Mars Transit', run: () => switchEnvironment('MARS') },
+        { label: 'Switch Mission Environment: Artemis Lunar Base', run: () => switchEnvironment('MOON') },
+        { label: 'Rotate Astronaut Passkey (Crew ID Locked)', run: () => el('openPasskeyModalBtn').click() }
+      ];
+
+      function renderCmdList(filter = '') {
+        const list = el('cmdListContainer');
+        if (!list) return;
+        while (list.firstChild) list.removeChild(list.firstChild);
+        const q = filter.toLowerCase();
+        COMMANDS.filter((c) => c.label.toLowerCase().includes(q)).forEach((c) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'w-full text-left px-3 py-2 rounded-xl hover:bg-violet-500/20 text-xs font-mono text-slate-200 transition';
+          btn.textContent = c.label;
+          btn.addEventListener('click', () => {
+            cmdModal.classList.add('hidden');
+            c.run();
+          });
+          list.appendChild(btn);
+        });
+      }
+
+      if (el('openCmdPaletteBtn')) {
+        el('openCmdPaletteBtn').addEventListener('click', () => {
+          renderCmdList('');
+          cmdModal.classList.remove('hidden');
+          el('cmdSearchInput').focus();
+        });
+      }
+      if (el('cmdSearchInput')) {
+        el('cmdSearchInput').addEventListener('input', (e) => renderCmdList(e.target.value));
+      }
+      window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault();
+          renderCmdList('');
+          cmdModal.classList.remove('hidden');
+          el('cmdSearchInput').focus();
+        } else if (e.key === 'Escape') {
+          cmdModal.classList.add('hidden');
+        }
+      });
+
       el('encryptVaultBtn').addEventListener('click', async () => {
         try {
+          if (backendOnline && backendToken) {
+            const res = await apiRequest('/vitals', 'POST', {
+              environment: state.env,
+              vitals: { ...state.vitals, symptoms: state.symptoms }
+            });
+            if (res.ok) {
+              showToast('Encrypted & logged to SQLite Audit Chain (AES-256 + HMAC).');
+              return;
+            }
+          }
           const enc = new TextEncoder();
           const key = await window.crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
           const iv = window.crypto.getRandomValues(new Uint8Array(12));
